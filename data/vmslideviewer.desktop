@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Encoding=UTF-8
+Name=vmslideviewer
+Comment=Virtual Microscopy App
+Exec=vmslideviewer
+Icon=vmslideviewer
