@@ -81,6 +81,9 @@ public:
   QWaitCondition readCond;
   vmReadThread readThread;
   int totalReadReqs;
+  QVector<vmReadRequest*> netReqs;
+  QMutex netMutex;
+  int totalNetReqs;
   bool keepRunning;
 protected:
   QVector<vmSlide*> sls;
@@ -120,7 +123,7 @@ protected:
   QPointer<vmDrawingArea> drawingArea;
   QPointer<vmZoomArea> zoomArea;
 //  QString title;
-  QPointer<QAction> openFileAct, openFileAct2, openFileButtonAct, exitAct, closeAct;
+  QPointer<QAction> openFileAct, openFileAct2, openFileButtonAct, exitAct, closeWindowAct, closeTabAct;
   QPointer<QAction> showZoomAct, showRangeToolAct;
   QPointer<QTabWidget> tabWidget;
   QPointer<QGraphicsScene> scene;
@@ -147,11 +150,13 @@ public:
   void removeAllRangeTools();
   void createAllZoomAreaWindows();
   void createAllRangeTools();
+  void enableCloseTabMenu() { closeTabAct->setEnabled(true); } 
 //  void contextMenuEvent(QContextMenuEvent *event);
 public slots:
   void openFileInNewWindow();
   void openFileInNewTab();
-  void close();
+  void closeTab();
+  void closeWindow();
   void quit();
   void tabChanged(int index);
   void tabClose(int index);
@@ -174,6 +179,7 @@ public:
   vmRangeTool *rangeTool;
   bool done;
   bool isZoom;
+  bool isOnNetwork;
   int ref;
   int zLevel, direction;
   int32_t level, zoomLevel, totalLevels;
@@ -226,6 +232,7 @@ public:
   void setTabNumber(int number) { tabNumber = number; }
   void setWindowNumber(int number) { windowNumber = number; }
   bool openslide(QString& filename);
+  inline bool getIsOnNetwork() { return isOnNetwork; }
 };
 
 
@@ -319,7 +326,7 @@ struct vmSlideLevel
   double power;
 };
 
-double vmToLeverPower(double, double, double);
-double vmFromLeverPower(double, double);
+double vmToLeverPower(double power, double minPower, double maxLeverPower, bool halfMinPower);
+double vmFromLeverPower(double scaleLever, double minPower);
 
 #endif // VMSLIDEVIEWER_H

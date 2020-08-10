@@ -14,9 +14,13 @@
 vmSlideApp *slApp;
 uint8_t vmSlideApp::backgroundRgba[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 
-double vmToLeverPower(double power, double minPower, double maxLeverPower) 
+double vmToLeverPower(double power, double minPower, double maxLeverPower, bool halfMinPower) 
 {
-  double levelFloor = minPower / 2;
+  double levelFloor = minPower;
+  if (halfMinPower) 
+  {
+    minPower /= 2;
+  }
   double levelCeil = minPower;
   int count=-1;
   while (levelCeil < power)
@@ -96,6 +100,7 @@ vmSlide* vmSlideApp::addSlide(QString& filename, bool newWindow, vmSlideWindow *
     title.append(filename);
     window->setWindowTitle(title);
     window->show();
+    window->enableCloseTabMenu();
     //createZoomWindow(sl);
     //createZoomRange(sl);
     //gtkWidgetSetSensitive(sl->parentWindow->infoMenuItem, TRUE);
@@ -173,7 +178,6 @@ bool vmSlide::openslide(QString& _filename)
 {
   QString slideError; 
   const char * c_filename;
-  const char * c_maxPowerTxt;
   QByteArray ba;
   filename = _filename;
   if (filename.isNull()) return false;
@@ -197,6 +201,10 @@ bool vmSlide::openslide(QString& _filename)
     {
       fileType = VM_OLYMPUS_TYPE;
     }
+    else if (fileinfo.isDir()==false && extUpper == "JSON")
+    {
+      fileType = VM_GOOGLEMAPS_TYPE;
+    }
     qDebug() << "Opening file: " << c_filename << "\n";
     newCache = cacheOpen(c_filename, fileType, slideError, vmSlideApp::backgroundRgba);
   }
@@ -207,20 +215,12 @@ bool vmSlide::openslide(QString& _filename)
     yStart = 0;
     totalLevels = cacheGetLevelCount(cache);
     
-    maxPowerTxt=cacheGetPropertyValue(newCache, OPENSLIDE_PROPERTY_NAME_OBJECTIVE_POWER);
-    maxPower = 0.0;
-    if (!maxPowerTxt.isEmpty())
-    {
-      QByteArray ba2=maxPowerTxt.toUtf8();
-      c_maxPowerTxt = ba2.data(); 
-      maxPower = atof(c_maxPowerTxt);
-    }
+    isOnNetwork = cache->pReader->getIsOnNetwork();
+    maxPower=cache->pReader->getSlideDepth(); 
     if (maxPower == 0.0) 
     {
-      maxPowerTxt = "";
       maxPower = 40.0;
     }
- 
     pyramidLevels.clear();
     double downSample2 = 1.0;
     double power = 1.0;
@@ -256,18 +256,49 @@ bool vmSlide::openslide(QString& _filename)
       pyramidLevels.append(levelData);
     }
     currentPower = minPower;
-    leverPower = 0.0;
+    //leverPower = 0.0;
     power = maxPower;
     double totalPartitions = 0.0;
-    for (; power >= 1.0; power /= 2) 
+    bool halfMinPower;
+    if (fileType == VM_OPENSLIDE_TYPE)
     {
-      totalPartitions++;
+      for (; power >= minPower; power /= 2) 
+      {
+        totalPartitions++;
+      }
+      halfMinPower = true;
+    }
+    else
+    {
+      for (; power >= minPower; power /= 2) 
+      {
+        totalPartitions++;
+      }
+      halfMinPower = true;
+      //power = minPower;
     }
     leverBuildPower = power;
-    leverPower = vmToLeverPower(currentPower, leverBuildPower, totalPartitions);
-    maxLeverPower = totalPartitions;
-    minLeverPower = -2.0;
-
+    leverPower = vmToLeverPower(currentPower, leverBuildPower, totalPartitions, halfMinPower);
+    
+    if (fileType == VM_OPENSLIDE_TYPE)
+    {
+      minLeverPower = -2.0;
+      leverPower = 1.0;
+      maxLeverPower = totalPartitions;
+    }
+    else
+    {
+      minLeverPower = 1.0;
+      leverPower = 1.0;
+      maxLeverPower = totalPartitions;
+    }
+    //QString str;
+    //QTextStream stream(&str);
+    //stream << " leverPower=" << leverPower << " maxLeverPower=" << maxLeverPower << " leverBuildPower=" << leverBuildPower << " minPower=" << minPower << " minLeverPower=" << minLeverPower;
+    //QMessageBox msgBox;
+    //msgBox.setText(*stream.string());
+    //msgBox.exec();
+    qDebug() << " leverPower=" << leverPower << " maxLeverPower=" << maxLeverPower << " leverBuildPower=" << leverBuildPower << " minPower=" << minPower << " minLeverPower=" << minLeverPower;
     downSample = maxDownSample;
     downSampleZ = downSample / 4;
     setMagnification(true);
@@ -401,9 +432,9 @@ void vmSlide::calcScroll(int direction)
   {
     return;
   }
-  if (leverPower2 < -1.0)
+  if (leverPower2 < minLeverPower)
   {
-    leverPower2 = -1.0;
+    leverPower2 = minLeverPower;
   }
   else if (leverPower2 > maxLeverPower)
   {
@@ -540,6 +571,7 @@ vmSlide::vmSlide()
 vmSlideApp::vmSlideApp(int& argc, char* argv[]) : QApplication(argc, argv)
 {
   totalReadReqs = 0;
+  totalNetReqs = 0;
   keepRunning = true;
   currentWindowNumber = 0;
   currentFocusWindow = 0;

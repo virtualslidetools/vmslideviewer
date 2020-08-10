@@ -4,8 +4,12 @@
 
 void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
 {
-  vmReadRequest readReq;
-  vmReadRequest* readReq2 = NULL;
+  vmReadRequest readReq;//, readReq2;
+  vmReadRequest *readReq2 = NULL;
+  
+  if (sl==NULL) return;
+
+  vmSlideCache * cache = sl->cache;
   safeBmp bmpDest;
 
   safeBmpClear(&bmpDest);
@@ -16,7 +20,7 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
   int xDest = qRound(destRect.x());
   int yDest = qRound(destRect.y());
 
-  if (sl->cache != NULL && sl->totalLevels > sl->level)
+  if (cache != NULL && sl->totalLevels > sl->level)
   {
     safeBmp bmp, bmp2;
     uint32_t *bmp_ptr = NULL;
@@ -25,8 +29,9 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
     double yRead = floor((double) y * sl->downSample); // - 1
     double grabWidth = ceil((double) width * sl->xScale); // + 2
     double grabHeight = ceil((double) height * sl->yScale); // + 2
-    int32_t topLevel=cacheGetLevelCount(sl->cache) - 1;
-    double downSample2 = sl->pyramidLevels[topLevel].downSample;
+    
+    int32_t topLevel = cacheGetQuickLevel(cache);
+    double downSample2 = cacheGetLevelDownsample(cache, topLevel);
     double xScale2 = sl->downSample / downSample2;
     double yScale2 = xScale2;
     double grabWidth2 = ceil((double) width * xScale2);// + 2;  // previous ceil + 1
@@ -35,10 +40,10 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
     safeBmpAlloc2(&bmp2, grabWidth2, grabHeight2);
     bmp_ptr = bmp.data;
     bmp_ptr2 = bmp2.data;
+    memset(&readReq, 0, sizeof(readReq));
     readReq.sl=sl;
     readReq.imgDest = &bmp2;
     readReq.drawingWidget = this;
-    readReq.zoomArea = NULL;
     readReq.xRead = xRead;
     readReq.yRead = yRead;
     readReq.width = grabWidth2;
@@ -51,6 +56,7 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
     readReq.isZoom = false;
     readReq.xDest = x;
     readReq.yDest = y;
+    readReq.isOnNetwork = sl->getIsOnNetwork();
     qDebug() << "in vmdrawingarea.cc:paintevent: L2 Region repainting: x=" << x << " y=" << y << " width=" << round(width) << " height=" << round(height) << " dest x=" << xDest << " dest y=" << yDest << "\n";
     if (bmp.data && bmp2.data)
     {
@@ -61,7 +67,7 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
       readReq.level = sl->level;
       readReq.downSample = sl->downSample;
       readReq.diskLoad = false;
-      qDebug() << "in vmdrawingarea.cc:paintevent: Normal Region repainting: x=" << x << " y=" << y << " width=" << width << " height=" << height << " xRead=" <<  xRead << " yRead=" << yRead << " grabWidth=" << grabWidth << " grabHeight=" << grabHeight << " sl->downSample=" << sl->downSample << " sl->xScale=" << sl->xScale << " sl->yScale=" << sl->yScale << " xDest=" << xDest << " yDest=" << yDest << "\n";
+      qDebug() << "in vmdrawingarea.cc:paintevent: Normal Region repainting: x=" << x << " y=" << y << " width=" << width << " height=" << height << " level=" << sl->level << " xRead=" <<  xRead << " yRead=" << yRead << " grabWidth=" << grabWidth << " grabHeight=" << grabHeight << " sl->downSample=" << sl->downSample << " sl->xScale=" << sl->xScale << " sl->yScale=" << sl->yScale << " xDest=" << xDest << " yDest=" << yDest << "\n";
       readReq2 = cacheReadRegion(&readReq);
       QImage img = QImage((uchar*)bmp.data, (int) grabWidth, (int) grabHeight, ((int) grabWidth)*4, QImage::Format_RGB32);
       QImage scaledImg;
@@ -101,16 +107,6 @@ void vmDrawingArea::drawForeground(QPainter *painter, const QRectF &destRect)
       }
       safeBmpFree(&bmpDest);
     }
-    if (readReq2)
-    {
-      slApp->readMutex.lock();
-      slApp->readReqs.append(readReq2);
-      slApp->totalReadReqs++;
-      slApp->readMutex.unlock();
-      slApp->readCondMutex.lock();
-      slApp->readCond.wakeOne();
-      slApp->readCondMutex.unlock();
-    } 
   }
 }
 
@@ -134,12 +130,6 @@ void vmDrawingArea::drawBackground(QPainter *painter, const QRectF& destRect)
 
 void vmDrawingArea::updateDrawingRectSlot(int x, int y, int width, int height)
 {
-  /*
-  Q_UNUSED(x);
-  Q_UNUSED(y);
-  Q_UNUSED(width);
-  Q_UNUSED(height);
-  */
   qDebug() << " background update: x=" << x << " y=" << y << " width=" << width << " height=" << height;
   QRectF rect(x, y, width, height);
   //invalidateScene(rect, QGraphicsScene::ForegroundLayer);
@@ -276,7 +266,7 @@ vmDrawingArea::vmDrawingArea(vmSlide *slNew, QWidget *parent, QGraphicsScene* sc
   setFocus();
   if (mainWindow->getShowZoom())
   {
-    createZoomAreaWindow();
+    //createZoomAreaWindow();
   }
   createRangeTool();
   if (mainWindow->getShowRange())

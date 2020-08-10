@@ -3,12 +3,12 @@ extern "C"
 {
 #include "openslide/openslide.h"
 }
-//#include "composite.h"
 
 vmOpenSlideReader::vmOpenSlideReader(const char *filename)
 {
   int retCode = 0;
   mLastStatus = 0;
+  mIsOnNetwork = false;
   mOpenslide = openslide_open(filename);
   memset(mDefaultBkgd, 0, 4);
 
@@ -33,6 +33,15 @@ vmOpenSlideReader::vmOpenSlideReader(const char *filename)
     if (slideRgb)
     {
       memcpy(mDefaultBkgd, slideRgb, 3);
+    }
+    const char * maxPowerTxt=openslide_get_property_value(mOpenslide, OPENSLIDE_PROPERTY_NAME_OBJECTIVE_POWER);
+    if (maxPowerTxt == NULL)
+    {
+      mSlideDepth = 40.0;
+    }
+    else
+    {
+      mSlideDepth = atof(maxPowerTxt);
     }
   }
 }
@@ -75,6 +84,12 @@ int32_t vmOpenSlideReader::getTotalLevels()
 }
 
 
+int32_t vmOpenSlideReader::getQuickLevel()
+{
+  return openslide_get_level_count(mOpenslide) - 1; 
+}
+
+
 int32_t vmOpenSlideReader::getBestLevelForDownSample(double downSample)
 {
   return openslide_get_best_level_for_downsample(mOpenslide, downSample);
@@ -84,6 +99,13 @@ int32_t vmOpenSlideReader::getBestLevelForDownSample(double downSample)
 void vmOpenSlideReader::read(uint32_t *data, int64_t x, int64_t y, int32_t level, int64_t width, int64_t height)
 {
   openslide_read_region(mOpenslide, data, x, y, level, width, height);
+}
+
+
+void vmOpenSlideReader::networkRead(struct vmReadRequest* readReq)
+{
+  Q_UNUSED(readReq);
+  //openslide_read_region(mOpenslide, data, x, y, level, width, height);
 }
 
 

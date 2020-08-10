@@ -40,11 +40,18 @@ void vmSlideWindow::tabChanged(int tab)
 void vmSlideWindow::closeEvent(QCloseEvent* event)
 {
   close();
+  slApp->removeWindow(this);
   event->accept();
 }
 
 
-void vmSlideWindow::close()
+void vmSlideWindow::closeTab()
+{
+  tabClose(currentTabNumber);
+}
+
+
+void vmSlideWindow::closeWindow()
 {
   slApp->removeWindow(this);
 }
@@ -104,6 +111,10 @@ void vmSlideWindow::tabClose(int tab)
   tabWidget->removeTab(tab);
   vmSlide* sl=slApp->findSlide(windowNumber, tab);
   sl->slideMarkClose();
+  if (tabWidget->count() <= 0)
+  {
+    closeTabAct->setEnabled(false);
+  }
 }
 
 
@@ -219,17 +230,20 @@ void vmSlideWindow::setupWindow()
   //----------------------------------------------------------------------
   // Create Menus
   //---------------------------------------------------------------------- 
-  openFileAct = new QAction(tr("&Open File..."), this);
+  openFileAct = new QAction(tr("&Open File in New Tab..."), this);
   openFileAct->setShortcuts(QKeySequence::Open);
   connect(openFileAct, SIGNAL(triggered()), this, SLOT(openFileInNewTab()));
 
-  openFileAct2 = new QAction(tr("&Open File in new Window..."), this);
-  openFileAct2->setShortcuts(QKeySequence::Open);
+  openFileAct2 = new QAction(tr("Open File in New &Window..."), this);
   connect(openFileAct2, SIGNAL(triggered()), this, SLOT(openFileInNewWindow()));
 
-  closeAct = new QAction(tr("&Close Window"), this);
-  closeAct->setShortcuts(QKeySequence::Quit);
-  connect(closeAct, SIGNAL(triggered()), this, SLOT(close()));
+  closeTabAct = new QAction(tr("&Close Tab"), this);
+  closeTabAct->setEnabled(false);
+  connect(closeTabAct, SIGNAL(triggered()), this, SLOT(closeTab()));
+
+  closeWindowAct = new QAction(tr("Close Window"), this);
+  closeWindowAct->setShortcuts(QKeySequence::Quit);
+  connect(closeWindowAct, SIGNAL(triggered()), this, SLOT(closeWindow()));
 
   exitAct = new QAction(tr("Close All"), this);
   connect(exitAct, SIGNAL(triggered()), this, SLOT(quit()));
@@ -238,6 +252,8 @@ void vmSlideWindow::setupWindow()
 
   menu->addAction(openFileAct);
   menu->addAction(openFileAct2);
+  menu->addAction(closeTabAct);
+  menu->addAction(closeWindowAct);
   menu->addAction(exitAct);
 
   showZoomAct = new QAction(tr("&Hide Zoom Window"), this);

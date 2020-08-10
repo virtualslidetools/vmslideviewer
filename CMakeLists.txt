@@ -19,7 +19,7 @@ endif()
 
 find_package(JPEG)
 find_package(TIFF)
-find_package(Qt5 COMPONENTS Core Gui Widgets REQUIRED)
+find_package(Qt5 COMPONENTS Core Gui Widgets network REQUIRED)
 
 set ( MAIN_SRC
   src/safebmp.cc 
@@ -31,6 +31,8 @@ set ( MAIN_SRC
   src/vmzoomarea.cc
   src/vmtilereader.cc
   src/vmrangetool.cc
+  src/vmgooglemaps.cc
+  dist/jsoncpp.cpp
 )
 
 set ( MAIN_HEADERS
@@ -44,7 +46,7 @@ set ( MAIN_RESOURCES
   resources/vmslideviewer.qrc
 )
  
-include_directories( ${LIBJPEG_INCLUDE_DIRS} ${LIBTIFF_INCLUDE_DIRS} ${OPENSLIDE_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+include_directories( ${LIBJPEG_INCLUDE_DIRS} ${LIBTIFF_INCLUDE_DIRS} ${OPENSLIDE_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/dist)
 
 if (WIN32 OR WIN64 OR ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   list(APPEND MAIN_RESOURCES resources/images/vmslideviewer.ico)
@@ -52,7 +54,7 @@ endif()
 
 add_executable(vmslideviewer ${MAIN_SRC} ${MAIN_HEADERS} ${MAIN_RESOURCES})
 
-target_link_libraries(vmslideviewer Qt5::Widgets ${LIBJPEG_LIBRARIES} ${LIBTIFF_LIBRARIES} ${OPENSLIDE_LIBRARIES})
+target_link_libraries(vmslideviewer Qt5::Widgets Qt5::Network ${LIBJPEG_LIBRARIES} ${LIBTIFF_LIBRARIES} ${OPENSLIDE_LIBRARIES})
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   install(FILES data/vmslideviewer.desktop DESTINATION /usr/share/applications)

@@ -88,6 +88,13 @@ void cacheGetLevelDimensions(vmSlideCache *cache, int32_t level, int64_t* width,
   }
 }
 
+int32_t cacheGetQuickLevel(vmSlideCache *cache)
+{
+  int32_t level=0;
+  if (cache->pReader) level=cache->pReader->getQuickLevel();
+  return level;
+}
+
 int32_t cacheGetLevelCount(vmSlideCache *cache) 
 { 
   int32_t count=0; 
@@ -109,20 +116,42 @@ QString cacheGetPropertyValue(vmSlideCache *cache, const char *name)
 }
 
 
-uint32_t* cacheInitTile(vmTile *t, vmSlideCache *cache, int32_t level, int64_t x, int64_t y, int32_t width, int32_t height)
+void cacheInitTile(vmTile *t, vmSlideCache *cache, int32_t level, int64_t x, int64_t y)
 {
   t->slide=cache;
   t->level=level;
   t->x=x;
   t->y=y;
-  int64_t size=width * height;
-  uint32_t* bmpPtr = new uint32_t[size];
-  uint32_t backgroundRgba = cache->backgroundRgba;
-  t->data = bmpPtr;
-  for (int64_t i = 0; i < size; i++) bmpPtr[i] = backgroundRgba;
-  return bmpPtr;
+  t->data = NULL;
+  t->error = false;
+  t->filled = false;
+  t->nextRegion = NULL;
 }
- 
+
+
+bool cacheInitTileEx(vmTile *t, vmSlideCache *cache, int32_t level, int64_t x, int64_t y, int32_t width, int32_t height, bool allocMem)
+{
+  t->slide=cache;
+  t->level=level;
+  t->x=x;
+  t->y=y;
+  t->error = false;
+  t->filled = false;
+  t->nextRegion = NULL;
+  uint32_t* bmpPtr = NULL;
+  if (allocMem)
+  {
+    int64_t size=width * height;
+    bmpPtr = new uint32_t[size];
+    if (bmpPtr == NULL) return false;
+    uint32_t backgroundRgba = cache->backgroundRgba;
+    for (int64_t i = 0; i < size; i++) bmpPtr[i] = backgroundRgba;
+  }
+  t->data = bmpPtr;
+  return true;
+}
+
+
 void cacheFreeTile(vmTile *t)
 {
   delete[] t->data;
@@ -214,6 +243,20 @@ vmSlideCache* cacheOpen(const char *filename, int32_t fileType, QString &errorMs
       memcpy(&newSlide->backgroundRgba, newSlide->pReader->getDefaultBkgd(), 4);
     }
   }
+  else if (fileType == VM_GOOGLEMAPS_TYPE)
+  {
+    newSlide->pReader = new vmGoogleMaps(filename);
+    if (newSlide->pReader->getLastStatus() == VM_READ_ERROR)
+    {
+      errorMsg = newSlide->pReader->getErrorMsg();
+      delete newSlide->pReader;
+      delete newSlide;
+      return NULL;
+    }
+    newSlide->tileWidth = newSlide->pReader->getTileWidth();
+    newSlide->tileHeight = newSlide->pReader->getTileHeight();
+    memcpy(&newSlide->backgroundRgba, newSlide->pReader->getDefaultBkgd(), 4);
+  }
   else
   {
     return NULL;
@@ -261,7 +304,7 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
   if (cache==NULL || cache->pReader==NULL || cache->tileWidth == 0 || cache->tileHeight == 0) return NULL;
   qDebug() << "xRead=" << (int) readReq->xRead << " yRead=" << (int) readReq->yRead << " width=" << (int) readReq->width << " height=" << readReq->height << "\n";
   safeBmpUint32Set(readReq->imgDest, cache->backgroundRgba);
-  int32_t topLevel=cacheGetLevelCount(cache)-1;
+  int32_t topLevel=cacheGetQuickLevel(cache);
   double downSample = cacheGetLevelDownsample(cache, readReq->level);
   double downSample2 = cacheGetLevelDownsample(cache, topLevel);
   //double resample = downSample2 / downSample;
@@ -291,11 +334,10 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
     height = totalHeight - readReq->yRead;
     //readReq->height = (totalHeight - readReq->yRead) / readReq->downSample;
   }
+  //int64_t tileX = readReq->tileX;
+  //int64_t tileY = readReq->tileY;
   double startX = floor(floor(readReq->xRead / downSample) / (double) cache->tileWidth);
-  // double / (double) cache->tileWidth) * downSample * (double) cache->tileWidth;
-  //double startY = floor(round(readReq->yRead / downSample) / (double) cache->tileHeight) * downSample * (double) cache->tileHeight;
-  double startY = floor(floor(readReq->yRead / downSample) / (double) cache->tileHeight);// * downSample * (double) cache->tileHeight;
-
+  double startY = floor(floor(readReq->yRead / downSample) / (double) cache->tileHeight);
   double maxX = (double) readReq->xRead + width; 
   double maxY = (double) readReq->yRead + height;
   int64_t endStepX = ceil(ceil(maxX / downSample) / (double) cache->tileWidth);  
@@ -325,30 +367,6 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
     for (int64_t xStep=startX; xStep < endStepX; xStep++)
     {
       double xMarker = (double) xStep * (double) addX;
-      bool found=false;
-      vmTile *tile=NULL;
-      int index=0;
-      cacheMutex.lock();
-      if (sl->done == true)
-      {
-        cacheMutex.unlock();
-        headReadReq=NULL;
-        quit=true;
-        break;
-      }
-      while (index < cacheTotalTiles)
-      {
-        tile=cacheTiles[index];
-        if (tile->slide==cache && tile->level==readReq->level && tile->x==xStep && tile->y==yStep)
-        {
-          found=true;
-          cacheTiles.remove(index);
-          cacheTiles.append(tile);
-          break;
-        }
-        index++;
-      }
-      cacheMutex.unlock();
       double xBlockMax=xMarker + addX;
       double xStart = (xMarker < readReq->xRead ? readReq->xRead : xMarker);
       double xSrc = xStart - xMarker;
@@ -376,107 +394,168 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
         xSrc += xDiff;
         totalXCopy -= xDiff;
       }
+      xSrc = round(xSrc / downSample)-1;
+      xDest = round(xDest / downSample);
+      totalXCopy = ceil(totalXCopy / downSample);
+ 
+      ySrc = round(ySrc / downSample)-1;
+      yDest = round(yDest / downSample);
+      totalYCopy = ceil(totalYCopy / downSample);
 
-      //std::cout << " yBlockStart=" << yBlockStart << " yBlockMax=" << yBlockMax << " yStart=" << yStart << " ySrc=" << ySrc << " yDest=" << yDest << " totalYCopy=" << totalYCopy << std::endl;
+      if (totalXCopy <= 0 || totalYCopy <= 0) continue;
+      totalXCopy+=2;
+      totalYCopy+=2;
+
+      bool found=false;
+      bool filled=false;
+      bool error=false;
+      vmTile *tile=NULL;
+      int index=0;
+      cacheMutex.lock();
+      if (sl->done == true)
+      {
+        cacheMutex.unlock();
+        headReadReq=NULL;
+        quit=true;
+        break;
+      }
+      while (index < cacheTotalTiles)
+      {
+        tile=cacheTiles[index];
+        if (tile->slide==cache && 
+            tile->level==readReq->level && 
+            tile->x==xStep && 
+            tile->y==yStep)
+        {
+          found=true;
+          filled=tile->filled;
+          error=tile->error;
+          if (filled==false && error==false)
+          {
+            vmUpdateRegion * updateRegion = tile->nextRegion;
+            vmUpdateRegion * previousRegion = NULL;
+            vmUpdateRegion * newRegion = new vmUpdateRegion(readReq->xDest+xSrc, readReq->yDest+ySrc, totalXCopy, totalYCopy);
+            do 
+            {
+              previousRegion = updateRegion;
+              updateRegion = updateRegion->nextRegion;
+            } 
+            while (updateRegion != NULL);
+            previousRegion->nextRegion = newRegion;
+          }
+          cacheTiles.remove(index);
+          cacheTiles.append(tile);
+          break;
+        }
+        index++;
+      }
+      cacheMutex.unlock();
       uint32_t *imgPtr=NULL;
-      uint32_t *tempImgPtr=NULL;
+      //uint32_t *tempImgPtr=NULL;
+      //bool diskLoad = false, alreadyReq = false, redraw = false;
       if (found) 
       {
-        imgPtr = tile->data;
-      }
-      else if (readReq->diskLoad)
-      {
-        cacheMutex.lock();
-        if (sl->done)
+        if (filled)
         {
-          cacheMutex.unlock();
-          headReadReq=NULL;
-          quit=true;
-          break;
-          // return NULL;
-        }
-        if (cacheTotalTiles >= cacheMaxTiles)
-        {
-          qDebug() << "Evicting tile!\n";
-          int64_t i;
-          for (i=0; i<cacheTotalTiles; i++)
-          {
-            tile=cacheTiles[i];
-            if (tile->slide==cache && tile->level != topLevel) break;
-          }
-          if (i >= cacheTotalTiles) 
-          {
-            i=0;
-            tile=cacheTiles[i];
-          }
-          cacheTiles.remove(i);
-          cacheTotalTiles--;
-          delete[] tile->data;
-          tile->data = NULL;
-          delete tile;
-          tile=NULL;
-        }
-        cacheMutex.unlock();
-        tile=new vmTile;
-        if (tile && cacheInitTile(tile, cache, readReq->level, floor(floor(xMarker / downSample) / (double) cache->tileWidth), floor(floor(yMarker / downSample) / (double) cache->tileHeight), cache->tileWidth, cache->tileHeight))
-        {
-          qDebug() << "cache miss at openslide x=" << (int) floor(xMarker) << " y=" << (int) floor(yMarker) << "\n";
-          cache->pReader->read(tile->data, round(xMarker), round(yMarker), readReq->level, cache->tileWidth, cache->tileHeight);
-          //cacheSwapAlpha(tile->data, cache->tileWidth * cache->tileHeight);  
           imgPtr = tile->data;
+        }
+      }
+      else     
+      {
+        tile=new vmTile;
+        bool initTileMem = readReq->isOnNetwork ? false : true;
+        if (tile && cacheInitTileEx(tile, cache, readReq->level, floor(floor(xMarker / downSample) / (double) cache->tileWidth), floor(floor(yMarker / downSample) / (double) cache->tileHeight), cache->tileWidth, cache->tileHeight, initTileMem))
+        {
+          tile->nextRegion = new vmUpdateRegion(readReq->xDest+xSrc, readReq->yDest+ySrc, totalXCopy, totalYCopy);
+          qDebug() << "cache miss at openslide x=" << (int) floor(xMarker) << " y=" << (int) floor(yMarker) << "\n";
           cacheMutex.lock();
           if (sl->done)
           {
             cacheMutex.unlock();
-            headReadReq = NULL;
-            quit = true;
+            headReadReq=NULL;
+            quit=true;
             break;
+          }
+          if (cacheTotalTiles >= cacheMaxTiles)
+          {
+            qDebug() << "Evicting tile!\n";
+            int64_t i;
+            for (i=0; i<cacheTotalTiles; i++)
+            {
+              tile=cacheTiles[i];
+              if (tile->slide==cache && tile->level != topLevel && tile->filled == true) break;
+            }
+            if (i >= cacheTotalTiles) 
+            {
+              i=0;
+              tile=cacheTiles[i];
+            }
+            cacheTiles.remove(i);
+            cacheTotalTiles--;
+            delete[] tile->data;
+            tile->data = NULL;
+            delete tile;
+            tile=NULL;
           }
           cacheTiles.append(tile);
           cacheTotalTiles++;
           cacheMutex.unlock();
-        }
-        else
-        {
-          qDebug() << "CLEARING ALL CACHE MEMORY!!!!!!!!!!!!!!!!!!!!!!!!!!!";
-          cacheMutex.lock();
-          cacheRelease(cache);
-          cacheTotalTiles = 0;
-          cacheMutex.unlock();
+   
+          if (readReq->isOnNetwork == false && readReq->diskLoad)
+          {
+            cache->pReader->read(tile->data, round(xMarker), round(yMarker), readReq->level, cache->tileWidth, cache->tileHeight);
+            //cacheSwapAlpha(tile->data, cache->tileWidth * cache->tileHeight);  
+            imgPtr = tile->data;
+            cacheMutex.lock();
+            tile->filled = true;
+            if (sl->done)
+            {
+              cacheMutex.unlock();
+              headReadReq = NULL;
+              quit = true;
+              break;
+            }
+            cacheMutex.unlock();
+            filled = true;
+          }
         }
       }
-      else
+      if (filled==false)
       {
         vmReadRequest *readReq2 = new vmReadRequest;
+        memset(readReq2, 0, sizeof(vmReadRequest));
         sl->slideRef();
         readReq2->drawingWidget = readReq->drawingWidget;
         readReq2->zoomArea = readReq->zoomArea;
         readReq2->sl = sl;
+        readReq2->tile = tile;
         readReq2->downSample = readReq->downSample;
         readReq2->xMarker = xMarker;
         readReq2->yMarker = yMarker;
         readReq2->xRead = readReq->xRead;
         readReq2->yRead = readReq->yRead;
-        readReq2->width = addX;
-        readReq2->height = addY;
+        readReq2->width = xBlockMax - xStart;
+        readReq2->height = yBlockMax - yStart;
         readReq2->level = readReq->level;
         readReq2->isZoom = readReq->isZoom;
         readReq2->xStart = readReq->xStart;
         readReq2->yStart = readReq->yStart;
-        //readReq2->xDest = readReq->xDest;
-        //readReq2->yDest = readReq->yDest;
+        readReq2->xDest = readReq->xDest + xDest;
+        readReq2->yDest = readReq->yDest + yDest;
+        /*
         if (readReq2->isZoom)
         {
-          readReq2->xDest = readReq->xDest + round((xMarker - readReq->xRead) / readReq2->downSample);
-          readReq2->yDest = readReq->yDest + round((yMarker - readReq->yRead) / readReq2->downSample);
+          //readReq2->xDest = readReq->xDest + round((xMarker - readReq->xRead) / readReq2->downSample);
+          //readReq2->yDest = readReq->yDest + round((yMarker - readReq->yRead) / readReq2->downSample);
         }
         else
         {
-          readReq2->xDest = readReq->xDest + round((xMarker - readReq->xRead) / readReq->downSample);
-          readReq2->yDest = readReq->yDest + round((yMarker - readReq->yRead) / readReq->downSample);
-        }
+          //readReq2->xDest = readReq->xDest + round((xMarker - readReq->xRead) / readReq->downSample);
+          //readReq2->yDest = readReq->yDest + round((yMarker - readReq->yRead) / readReq->downSample);
+        }*/
         readReq2->diskLoad = true;
-        readReq2->tail = NULL;
+        readReq2->isOnNetwork = readReq->isOnNetwork;
+        readReq2->alreadyReq = found;
         if (prevReadReq)
         {
           prevReadReq->tail = readReq2;
@@ -486,39 +565,70 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
           headReadReq = readReq2;
         }
         prevReadReq = readReq2;
-        tempImgPtr=new uint32_t[cache->tileWidth * cache->tileHeight];
-        memset(tempImgPtr, 255, 4 * cache->tileWidth * cache->tileHeight),
-        imgPtr = tempImgPtr;
-      } 
-      if (imgPtr==NULL) 
-      {
-        quit=true;
-        break;
       }
-      xSrc = round(xSrc / downSample);
-      xDest = round(xDest / downSample);
-      totalXCopy = ceil(totalXCopy / downSample);
- 
-      ySrc = round(ySrc / downSample);
-      yDest = round(yDest / downSample);
-      totalYCopy = ceil(totalYCopy / downSample);
-
-      if (found) 
+      else
       {
-        xSrc--;
-        ySrc--;
-        totalXCopy+=2;
-        totalYCopy+=2;
-      }
-      if (totalXCopy <= 0 || totalYCopy <= 0) continue;
-      safeBmpInit(&imgSrc, imgPtr, cache->tileWidth, cache->tileHeight);
-      safeBmpCpy(readReq->imgDest, xDest, yDest, &imgSrc, xSrc, ySrc, totalXCopy, totalYCopy);
-      if (tempImgPtr)
-      {
-        delete[] tempImgPtr;
-        tempImgPtr = NULL;
+        safeBmpInit(&imgSrc, imgPtr, cache->tileWidth, cache->tileHeight);
+        safeBmpCpy(readReq->imgDest, xDest, yDest, &imgSrc, xSrc, ySrc, totalXCopy, totalYCopy);
       }
     }
+  }
+
+  if (headReadReq)
+  {
+    if (headReadReq->isOnNetwork==true)
+    {
+      vmReadRequest * nextReq = headReadReq;
+      slApp->netMutex.lock();
+      do
+      {
+        if (nextReq->alreadyReq == false)
+        {
+          //slApp->netReqs.append(nextReq);
+          slApp->totalNetReqs++;
+        }
+        nextReq = nextReq->tail;
+      }
+      while (nextReq);
+      slApp->netMutex.unlock();
+
+      nextReq = headReadReq;
+      do
+      {
+        if (nextReq->alreadyReq == false)
+        {
+          qDebug() << "Requesting nextReq @ " << nextReq;
+          cache->pReader->networkRead(nextReq);
+        }
+        nextReq = nextReq->tail;
+      }
+      while (nextReq);
+    }
+    else
+    {
+      bool startReadThread = false;
+      vmReadRequest * nextReq = headReadReq;
+      slApp->readMutex.lock();
+      do
+      {
+        if (nextReq->alreadyReq == false)
+        {
+          slApp->readReqs.append(nextReq);
+          slApp->totalReadReqs++;
+          startReadThread = true;
+        }
+        nextReq = nextReq->tail;
+      }
+      while (nextReq);
+      slApp->readMutex.unlock();
+      
+      if (startReadThread)
+      {
+        slApp->readCondMutex.lock();
+        slApp->readCond.wakeOne();
+        slApp->readCondMutex.unlock();
+      }
+    } 
   }
   return headReadReq;
 }
@@ -575,156 +685,70 @@ void cacheCopyRequests(vmReadRequest *readReq, vmReadRequest *readReq2, safeBmp 
     if (yBlockMax > maxY) yBlockMax = maxY;
     double totalYCopy=yBlockMax - yStart;
 
-    totalXCopy = ceil(totalXCopy / nextReq->downSample);
-    xSrc = round(xSrc / nextReq->downSample);
-    totalYCopy = ceil(totalYCopy / nextReq->downSample);
-    ySrc = round(ySrc / nextReq->downSample);
-    
-    /*
-    if (xSrc < 0) 
-    {
-      totalXCopy += xSrc;
-      xSrc = 0;
-    }
-    if (ySrc < 0)
-    {
-      totalYCopy += ySrc;
-      ySrc = 0;
-    }*/
-    //if (totalXCopy <= 0 || totalYCopy <= 0) 
-    {
-    //  nextReq = nextReq->tail;
-    //  continue;
-    }
-    //if (xSrc > 0)
-    {
-      xSrc--;
-      totalXCopy += 2;
-    }
-    //else
-    {
-      //totalXCopy++;
-    }
-    //if (ySrc > 0)
-    {
-      ySrc--;
-      totalYCopy += 2;
-    }
-    //else
-    {
-      //totalYCopy++;
-    }
+    totalXCopy = ceil(totalXCopy / nextReq->downSample) + 2;
+    xSrc = round(xSrc / nextReq->downSample) - 1;
+    totalYCopy = ceil(totalYCopy / nextReq->downSample) + 2;
+    ySrc = round(ySrc / nextReq->downSample) - 1;
     safeBmpCpy(readReq->imgDest, xSrc, ySrc, imgSrc2, xSrc, ySrc, totalXCopy, totalYCopy);
+    
+    vmReadRequest * previousReq = nextReq;
     nextReq = nextReq->tail;
+    previousReq->tail = NULL;
+    if (previousReq->alreadyReq)
+    {
+      delete previousReq;
+    }
   }
 }
 
 
-bool cacheFillRequests(vmReadRequest *readReq)
+vmTile* cacheFillRequest(vmReadRequest *readReq)
 {
-  bool queueRedraw = false;
-  if (readReq==NULL || readReq->sl==NULL || readReq->sl->done==true) return false;
+  if (readReq==NULL || readReq->sl==NULL || readReq->sl->done==true) return NULL;
   vmSlideCache *cache = readReq->sl->cache;
-  if (cache==NULL || cache->pReader==NULL || cache->tileWidth == 0 || cache->tileHeight == 0) return false;
-  int32_t topLevel=cacheGetLevelCount(cache)-1;
-  double downSample = cacheGetLevelDownsample(cache, readReq->level);
-  //double currentSample = readReq->sl->downSample;
-  //double currentSample2 = readReq->sl->downSample;
-  //double currentSample = readReq->downSample;
-  //double currentSample2 = readReq->downSample;
-  /*
-  if (readReq->isZoom)
+  if (cache==NULL || cache->pReader==NULL || cache->tileWidth == 0 || cache->tileHeight == 0) return NULL;
+  //int32_t topLevel=cacheGetQuickLevel(cache);
+  //double downSample = cacheGetLevelDownsample(cache, readReq->level);
+  bool redraw=false;
+  //bool found=false;
+  vmTile* tile = readReq->tile;
+  //int index=0;
+  double xMarker = readReq->xMarker;
+  double yMarker = readReq->yMarker;
+  //int64_t tileX = readReq->tileX;
+  //int64_t tileY = readReq->tileY;
+  //int64_t tileX = floor(floor(readReq->xMarker / downSample) / (double) cache->tileWidth);
+  //int64_t tileY = floor(floor(readReq->yMarker / downSample) / (double) cache->tileHeight);
+  bool alreadyFilled = false;
+  
+  cache = readReq->sl->cache;
+  
+  cacheMutex.lock();
+  alreadyFilled = tile->filled;
+  cacheMutex.unlock();
+  
+  if (alreadyFilled == false)
   {
-    currentSample2 = readReq->downSampleZ;
-  }*/
-
-  while (readReq)
-  {
-    bool found=false;
-    vmTile* tile;
-    int index=0;
-    double xMarker = readReq->xMarker;
-    double yMarker = readReq->yMarker;
-    int64_t tileX = floor(floor(xMarker / downSample) / (double) cache->tileWidth);
-    int64_t tileY = floor(floor(yMarker / downSample) / (double) cache->tileHeight);
+    qDebug() << "Filling read request " << readReq << "\n";
+    int tileSize = cache->tileWidth * cache->tileHeight * 4;
+    char * tileData = new char[tileSize];
+    memset(tileData, 255, tileSize);
+    qDebug() << "Reading region xMarker=" << (int) xMarker << " yMarker=" << (int) yMarker << "\n";
+    cache->pReader->read((uint32_t*)tileData, round(xMarker), round(yMarker), readReq->level, cache->tileWidth, cache->tileHeight);
+    //cacheSwapAlpha(tile->data, cache->tileWidth * cache->tileHeight);  
+    bool done = false;
     cacheMutex.lock();
-    cache = readReq->sl->cache;
-    if (cache==NULL || cache->pReader==NULL ||  
-        readReq->sl->done)
-    {
-      cacheMutex.unlock();
-      return false;
-    }
-    while (index < cacheTotalTiles)
-    {
-      tile=cacheTiles[index];
-      if (tile->slide==cache && tile->level==readReq->level && tile->x==tileX && tile->y==tileY)
-      {
-        found=true;
-        queueRedraw = true;
-        break;
-      }
-      index++;
-    }
+    tile->data = (uint32_t*) tileData;
+    tile->filled = true;
+    done = readReq->sl->done;
     cacheMutex.unlock();
-    //bool bounds1=readReq->downSample == currentSample2;
-    //bool bounds2=readReq->xRead + (readReq->width * downSample) >= readReq->sl->xStart;
-    //bool bounds3=readReq->xRead < readReq->sl->xStart + (readReq->sl->windowWidth * currentSample);
-    //bool bounds4=readReq->yRead + (readReq->height * downSample) >= readReq->sl->yStart;
-    //bool bounds5=readReq->yRead < readReq->sl->yStart + (readReq->sl->windowHeight * currentSample);
-    if (found==false)
+    if (done == false)
     {
-      cacheMutex.lock();
-      if (cacheTotalTiles >= cacheMaxTiles)
-      {
-        qDebug() << "Evicting tile!\n";
-        int64_t i;
-        for (i=0; i<cacheTotalTiles; i++)
-        {
-          tile=cacheTiles[i];
-          if (tile->level != topLevel) break;
-        }
-        if (i >= cacheTotalTiles) 
-        {
-          i=0;
-          tile=cacheTiles[i];
-        }
-        cacheTiles.remove(i);
-        cacheTotalTiles--;
-        delete[] tile->data;
-        tile->data = NULL;
-        delete tile;
-        tile=NULL;
-      }
-      cacheMutex.unlock();
-      tile=new vmTile;
-      if (tile && cacheInitTile(tile, cache, readReq->level, floor(floor(xMarker / downSample) / (double) cache->tileWidth), floor(floor(yMarker / downSample) / (double) cache->tileHeight), cache->tileWidth, cache->tileHeight))
-      {
-        qDebug() << "Reading region xMarker=" << (int) xMarker << " yMarker=" << (int) yMarker << "\n";
-        cache->pReader->read(tile->data, round(xMarker), round(yMarker), readReq->level, cache->tileWidth, cache->tileHeight);
-        //cacheSwapAlpha(tile->data, cache->tileWidth * cache->tileHeight);  
-        cacheMutex.lock();
-        if (readReq->sl->done)
-        {
-          cacheMutex.unlock();
-          return false;
-        }
-        cacheTiles.append(tile);
-        cacheTotalTiles++;
-        cacheMutex.unlock();
-        queueRedraw = true;
-      }
-      else
-      {
-        cacheMutex.lock();
-        cacheRelease(cache);
-        cacheTotalTiles=0;
-        cacheMutex.unlock();
-      }
+      redraw = true;
     }
-    readReq = readReq->tail;
   }
-  return queueRedraw;
+  if (redraw) return tile;
+  return NULL;
 }
 
 
@@ -737,5 +761,39 @@ void cacheInitialize(int maxTiles)
 {
   cacheTiles.clear();
   cacheMaxTiles = maxTiles;
+}
+
+
+void cacheQueueRedraw(vmReadRequest *readReq)
+{
+  int x=readReq->xDest;
+  int y=readReq->yDest;
+  double downSampleLevel = readReq->sl->pyramidLevels[readReq->level].downSample;
+  qDebug() << "cacheQueueRedraw: in slidecache.cc:run original width=" << readReq->width << " original height=" << readReq->height << " downsample: " << readReq->downSample << " level downsample: " << downSampleLevel;
+  int width=round((double) readReq->width / readReq->downSample);
+  int height=round((double) readReq->height / readReq->downSample);
+  qDebug() << "in vmthreads.cc:run Marked updated region: x=" << x << " y=" << y << " width=" << width << " height=" << height << "\n";
+  if (readReq->isZoom)
+  {
+    readReq->zoomArea->updateZoomRect(x, y, width, height);
+  }
+  else
+  {
+    readReq->drawingWidget->updateDrawingRect(x, y, width, height);
+  }
+}
+
+
+void cacheQueueRedraw(vmReadRequest *readReq, vmUpdateRegion *updateRegion)
+{
+  qDebug() << "in vmthreads.cc:run Marked updated region: x=" << updateRegion->x << " y=" << updateRegion->y << " width=" << updateRegion->width << " height=" << updateRegion->height << "\n";
+  if (readReq->isZoom)
+  {
+    readReq->zoomArea->updateZoomRect(updateRegion->x, updateRegion->y, updateRegion->width, updateRegion->height);
+  }
+  else
+  {
+    readReq->drawingWidget->updateDrawingRect(updateRegion->x, updateRegion->y, updateRegion->width, updateRegion->height);
+  }
 }
 

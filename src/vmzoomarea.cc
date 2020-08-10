@@ -6,6 +6,9 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
 {
   vmReadRequest readReq;
   vmReadRequest* readReq2 = NULL;
+  
+  if (sl == NULL) return;
+  vmSlideCache * cache = sl->cache;
   safeBmp bmpDest;
 
   safeBmpClear(&bmpDest);
@@ -18,27 +21,7 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
   int width=(int) destRect.width();
   int height=(int) destRect.height();
   
-  /*
-  if (x+width >= slApp->zoomWindowWidth) 
-  {
-    width-=2;
-  }
-  */
-  //if (y+height >= slApp->zoomWindowHeight)
-  {
-    /*
-    if (y <= 0)
-    {
-      height += y;
-    }*/
-    //height-=2;
-  }
-  /*
-  int destX=x;
-  int destY=y;
-  if (destX=0) destX++;
-  if (y=0) y++;*/
-  if (sl->cache != NULL && sl->totalLevels > sl->level)
+  if (cache != NULL && sl->totalLevels > sl->level)
   {
     safeBmp bmp, bmp2;
     uint32_t *bmp_ptr = NULL;
@@ -47,8 +30,8 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
     double grabHeight = ceil((double) height * sl->yZoomScale);
     double xRead = round(sl->xMouse + (((double) x - (double) slApp->zoomWindowWidth / 16.0) * sl->downSample)); 
     double yRead = round(sl->yMouse + (double) y * sl->downSample);
-    int32_t topLevel=cacheGetLevelCount(sl->cache) - 1;
-    double downSample2 = sl->pyramidLevels[topLevel].downSample;
+    int32_t topLevel = cacheGetQuickLevel(cache);
+    double downSample2 = cacheGetLevelDownsample(cache, topLevel);
     double xScale2 = sl->downSampleZ / downSample2; 
     double yScale2 = xScale2;
     double grabWidth2 = ceil((double) width * xScale2);
@@ -57,6 +40,7 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
     safeBmpAlloc2(&bmp2, (int) grabWidth2, (int) grabHeight2);
     bmp_ptr = bmp.data;
     bmp_ptr2 = bmp2.data;
+    memset(&readReq, 0, sizeof(readReq));
     readReq.sl=sl;
     readReq.imgDest = &bmp2;
     readReq.drawingWidget = NULL;
@@ -73,6 +57,7 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
     readReq.isZoom = true;
     readReq.xDest = x;
     readReq.yDest = y;
+    readReq.isOnNetwork = sl->getIsOnNetwork();
     if (bmp.data && bmp2.data)
     {
       cacheReadRegion(&readReq);
@@ -122,16 +107,6 @@ void vmZoomArea::paintEvent(QPaintEvent* event)
       }
       safeBmpFree(&bmpDest);
     }
-    if (readReq2)
-    {
-      slApp->readMutex.lock();
-      slApp->readReqs.append(readReq2);
-      slApp->totalReadReqs++;
-      slApp->readMutex.unlock();
-      slApp->readCondMutex.lock();
-      slApp->readCond.wakeOne();
-      slApp->readCondMutex.unlock();
-    } 
   }
   x=(int) destRect.x();
   y=(int) destRect.y();

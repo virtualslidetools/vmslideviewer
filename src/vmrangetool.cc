@@ -103,7 +103,8 @@ void vmRangeTool::paintEvent(QPaintEvent* evt)
     {
       painter.setPen(blackPen);
     }
-    double leverPower = (double) qFloor(y2 / 20) - 1.0;
+    double leverPower = (double) qFloor(y2 / 20) + sl->minLeverPower;
+
     double currentPower = vmFromLeverPower(leverPower, sl->leverBuildPower);
     ts << currentPower << "x";
     //qDebug() << "PWR: " << currentPower << "Y2: " << y2 << " YEND: " << yEnd << " MEASUREHEIGHT: " << winHeight;
@@ -203,7 +204,7 @@ vmRangeTool::vmRangeTool(vmSlide *slNew) : QWidget(slNew->drawingArea)
   
   int step = 0;
   winWidth = 0;
-  for (double leverPower = -2.0; leverPower <= sl->maxLeverPower; leverPower += 0.5)
+  for (double leverPower = sl->minLeverPower; leverPower <= sl->maxLeverPower; leverPower += 0.5)
   {
     QLabel *labelPixmap = new QLabel(this);
     labels.push_back(labelPixmap);
@@ -225,7 +226,7 @@ vmRangeTool::vmRangeTool(vmSlide *slNew) : QWidget(slNew->drawingArea)
     #endif
     if (lineWidth > winWidth) winWidth = lineWidth;
   }
-  rangeLevels = step;
+  rangeLevels = step+2;
   winWidth += 27;
   winHeight = rangeLevels * 10;
   setGeometry(x, y, winWidth, winHeight);
@@ -236,18 +237,22 @@ vmRangeTool::vmRangeTool(vmSlide *slNew) : QWidget(slNew->drawingArea)
   setCursor(Qt::PointingHandCursor);
   mouseInWidget = false;
   setMouseTracking(true);
+  setLevel(sl->leverPower);
 }
 
 
 void vmRangeTool::setLevel(double leverPower)
 {
+  qDebug() << "SET LEVEL=" << leverPower << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
   if (sl && sl->cache)
   {
     if (lastLevel >= 0)
     {
       labels[lastLevel]->clear();
     }
-    int level = (int) qRound((leverPower * 2) + 2.0);
+    int level = (int) qRound((leverPower * 2) - (2 * sl->minLeverPower));
+    //int level = (int) qRound((leverPower * 2) - 2.0);
+
     if (level >= 0 && level <= rangeLevels)
     {
       labels[level]->setPixmap(*activePixmap);

@@ -19,33 +19,18 @@ void vmReadThread::run()
       readReqs.append(slApp->readReqs[i]);
     }
     slApp->readMutex.unlock();
-    qDebug() << "Filling requests... total " << totalReadReqs << "\n";
+    
     for (int i = 0; i < totalReadReqs; i++)
     {
       vmReadRequest *readReq = readReqs[i];
-      if (cacheFillRequests(readReq))
+      vmTile * tile = cacheFillRequest(readReq);
+      if (tile)
       {
-        vmReadRequest *nextReq=readReq;
-        while (nextReq)
+        vmUpdateRegion * updateRegion = tile->nextRegion;
+        while (updateRegion)
         {
-          readReq = nextReq;
-          nextReq = readReq->tail;
-    //      qDebug() << "Queueing redraw...\n";
-          int x=readReq->xDest;// + (readReq->sl->xStart - readReq->xStart);
-          int y=readReq->yDest;// + (readReq->sl->yStart - readReq->yStart);
-          double downSampleLevel = readReq->sl->pyramidLevels[readReq->level].downSample;
-          qDebug() << "in vmthreads.cc:run original width=" << readReq->width << " original height=" << readReq->height << " downsample: " << readReq->downSample << " level downsample: " << downSampleLevel;
-          int width=round((double) readReq->width / readReq->downSample);
-          int height=round((double) readReq->height / readReq->downSample);
-          qDebug() << "in vmthreads.cc:run Marked updated region: x=" << x << " y=" << y << " width=" << width << " height=" << height << "\n";
-          if (readReq->isZoom)
-          {
-            readReq->zoomArea->updateZoomRect(x, y, width, height);
-          }
-          else
-          {
-            readReq->drawingWidget->updateDrawingRect(x, y, width, height);
-          }
+          cacheQueueRedraw(readReq, updateRegion);
+          updateRegion = updateRegion->nextRegion;
         }
       }
     }
@@ -56,24 +41,31 @@ void vmReadThread::run()
       vmReadRequest *readReq = readReqs[a];
       for (int b = 0; b < slApp->totalReadReqs; b++)
       {
-        if (slApp->readReqs[b]==readReq)
+        if (readReq == slApp->readReqs[b])
         {
           slApp->readReqs.remove(b);
           slApp->totalReadReqs--;
-          vmReadRequest *nextReq=readReq;
-          while (nextReq)
-          {
-            readReq = nextReq;
-            nextReq = readReq->tail;
-            readReq->sl->slideUnref();
-            delete readReq;
-          }
+          readReq->sl->slideUnref();
+          delete readReq;
           break;
         }
-      }  
+      }
     }
     totalReadReqs = slApp->totalReadReqs;
     slApp->readMutex.unlock();
+    /*
+    for (int i = 0; i < slApp->totalReadReqs; i++)
+    {
+      vmReadRequest *readReq = slApp->readReqs[i];
+      if (readReq->filled || readReq->error)
+      {
+        slApp->readReqs.remove(i);
+        slApp->totalReadReqs--;
+        readReq->sl->slideUnref();
+        delete readReq;
+        break;
+      }  
+    }*/
     
     readReqs.clear();
 
@@ -89,9 +81,5 @@ void vmReadThread::run()
     totalReadReqs = slApp->totalReadReqs;
     slApp->readMutex.unlock();
   }
-  //finished();
-  //gArrayFree(slApp->sls, TRUE);
-  //cacheReleaseAll();
 }
-
 
