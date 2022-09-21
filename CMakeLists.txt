@@ -19,7 +19,10 @@ endif()
 
 find_package(JPEG)
 find_package(TIFF)
-find_package(Qt5 COMPONENTS Core Gui Widgets network REQUIRED)
+find_package(Qt5 COMPONENTS Core Gui Widgets network)
+if (NOT Qt5_FOUND)
+  find_package(Qt5 COMPONENTS Core Gui Widgets Network REQUIRED)
+endif()
 
 set ( MAIN_SRC
   src/safebmp.cc 
