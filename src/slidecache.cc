@@ -480,22 +480,23 @@ vmReadRequest* cacheReadRegion(vmReadRequest *readReq)
           {
             qDebug() << "Evicting tile!\n";
             int64_t i;
+            vmTile *rmTile = NULL;
             for (i=0; i<cacheTotalTiles; i++)
             {
-              tile=cacheTiles[i];
-              if (tile->slide==cache && tile->level != topLevel && tile->filled == true) break;
+              rmTile=cacheTiles[i];
+              if (rmTile->slide==cache && rmTile->level != topLevel && rmTile->filled == true) break;
             }
             if (i >= cacheTotalTiles) 
             {
               i=0;
-              tile=cacheTiles[i];
+              rmTile=cacheTiles[i];
             }
             cacheTiles.remove(i);
             cacheTotalTiles--;
-            delete[] tile->data;
-            tile->data = NULL;
-            delete tile;
-            tile=NULL;
+            delete[] rmTile->data;
+            rmTile->data = NULL;
+            delete rmTile;
+            rmTile=NULL;
           }
           cacheTiles.append(tile);
           cacheTotalTiles++;
